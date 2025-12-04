@@ -1,21 +1,23 @@
+// ==============================
+// FINAL BACKEND COMPLETE FILE
+// ==============================
+
 import 'dotenv/config';
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-import { 
-    initializeApp 
-} from "firebase/app";
-import { 
-    getFirestore, 
-    doc, 
-    getDoc, 
-    setDoc, 
-    updateDoc, 
-    increment, 
-    collection, 
-    getDocs, 
-    query, 
+import { initializeApp } from "firebase/app";
+import {
+    getFirestore,
+    doc,
+    getDoc,
+    setDoc,
+    updateDoc,
+    increment,
+    collection,
+    getDocs,
+    query,
     where,
-    serverTimestamp 
+    serverTimestamp
 } from "firebase/firestore";
 
 // ==============================
@@ -33,8 +35,8 @@ const firebaseConfig = {
 };
 
 const REWARD_AMOUNT = 500;
-const WELCOME_IMAGE_URL = 'https://i.ibb.co/932298pT/file-32.jpg';
-const WEB_APP_URL = 'https://khanbhai009-cloud.github.io/Tg-bot';
+const WELCOME_IMAGE_URL = "https://i.ibb.co/932298pT/file-32.jpg";
+const WEB_APP_URL = "https://khanbhai009-cloud.github.io/Tg-bot";
 
 // ==============================
 // 🔥 FIREBASE INIT
@@ -43,7 +45,7 @@ const appFB = initializeApp(firebaseConfig);
 const db = getFirestore(appFB);
 
 // ==============================
-// 🤖 TELEGRAM BOT INIT
+// 🤖 TELEGRAM BOT
 // ==============================
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
@@ -60,24 +62,29 @@ async function incrementField(userId, field, amount) {
     });
 }
 
+// Create or update user in Firestore
 async function createOrEnsureUser(userId, name, photoURL, referralId = null) {
     const userRef = doc(db, "users", String(userId));
     const snap = await getDoc(userRef);
 
     if (!snap.exists()) {
-        await setDoc(userRef, {
-            id: String(userId),
-            name,
-            photoURL,
-            coins: 0,
-            reffer: 0,
-            refferBy: referralId || null,
-            tasksCompleted: 0,
-            totalWithdrawals: 0,
-            frontendOpened: false,
-            rewardGiven: false,
-        });
-        console.log(`🔥 New user created ${userId} (referredBy=${referralId})`);
+        await setDoc(
+            userRef,
+            {
+                id: String(userId),
+                name,
+                photoURL,
+                coins: 0,
+                reffer: 0,
+                refferBy: referralId || null,
+                tasksCompleted: 0,
+                totalWithdrawals: 0,
+                frontendOpened: false,
+                rewardGiven: false,
+            },
+            { merge: true }
+        );
+        console.log(`🔥 New user created ${userId} (referBy=${referralId})`);
     } else {
         await updateDoc(userRef, {
             name,
@@ -88,14 +95,14 @@ async function createOrEnsureUser(userId, name, photoURL, referralId = null) {
     }
 }
 
+// Reward referrer A when user B opens app
 async function rewardReferrer(userIdB, referrerIdA) {
-    console.log(`🎁 Rewarding referrer ${referrerIdA} for user ${userIdB}`);
+    console.log(`🎁 Rewarding ${referrerIdA} for referral ${userIdB}`);
 
     await incrementField(referrerIdA, "coins", REWARD_AMOUNT);
     await incrementField(referrerIdA, "reffer", 1);
     await updateField(userIdB, "rewardGiven", true);
 
-    // Add ledger
     await setDoc(doc(db, "ref_rewards", String(userIdB)), {
         userId: String(userIdB),
         referrerId: String(referrerIdA),
@@ -103,38 +110,48 @@ async function rewardReferrer(userIdB, referrerIdA) {
         createdAt: serverTimestamp()
     });
 
-    // Notify referrer
     await bot.sendMessage(
         referrerIdA,
-        `🎉 *Referral Bonus!* \nYou've earned *${REWARD_AMOUNT} coins* because your friend opened the app.`,
+        `🎉 *Referral Bonus!*  
+You earned *${REWARD_AMOUNT} coins* because your referred user opened the app.`,
         { parse_mode: "Markdown" }
     );
 }
 
 // ==============================
-// 🚀 REFERRAL CLEAN EXTRACTOR
+// 🔥 CLEAN REFERRAL ID EXTRACTOR
 // ==============================
 function extractReferralId(text) {
     if (!text) return null;
-
-    const cleaned = text.replace(/[^0-9]/g, ""); // extract only numbers
-
+    const cleaned = text.replace(/[^0-9]/g, "");
     return cleaned.length > 0 ? cleaned : null;
 }
 
 // ==============================
-// 🤖 BOT LISTENER
+// 🤖 BOT COMMAND: /start
 // ==============================
 bot.onText(/\/start(.*)/, async (msg, match) => {
     const chatId = msg.chat.id;
+    const firstName = msg.from.first_name || "User";
 
-    // Extract referral ID
     const referralId = extractReferralId(match[1]);
-
-    const name = msg.from.first_name || "User";
     const photoURL = "";
 
-    await createOrEnsureUser(chatId, name, photoURL, referralId);
+    // Create/update user
+    await createOrEnsureUser(chatId, firstName, photoURL, referralId);
+
+    // WELCOME MESSAGE
+    const welcomeCaption = `👋 Hi! Welcome ${firstName} ⭐  
+Yaha aap tasks complete karke real rewards kama sakte ho!
+
+🔥 Daily Tasks  
+🔥 Video Watch  
+🔥 Mini Apps  
+🔥 Referral Bonus  
+🔥 Auto Wallet System  
+
+**Ready to earn?**  
+Tap START and your journey begins!`;
 
     const keyboard = {
         inline_keyboard: [
@@ -144,16 +161,14 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
         ]
     };
 
-    const caption = `👋 Hi ${name}!\nWelcome to the earning bot.\nStart tasks, invite friends and win rewards!`;
-
     try {
         await bot.sendPhoto(chatId, WELCOME_IMAGE_URL, {
-            caption,
+            caption: welcomeCaption,
             parse_mode: "Markdown",
             reply_markup: keyboard
         });
     } catch {
-        await bot.sendMessage(chatId, caption, {
+        await bot.sendMessage(chatId, welcomeCaption, {
             parse_mode: "Markdown",
             reply_markup: keyboard
         });
@@ -177,15 +192,16 @@ async function referralWorker() {
     snaps.forEach(async (docSnap) => {
         const userData = docSnap.data();
         const userIdB = docSnap.id;
-        const referrer = userData.refferBy;
+        const referrerIdA = userData.refferBy;
 
-        if (referrer && referrer !== userIdB) {
-            await rewardReferrer(userIdB, referrer);
+        if (referrerIdA && referrerIdA !== userIdB) {
+            await rewardReferrer(userIdB, referrerIdA);
         }
     });
 }
 
-setInterval(referralWorker, 4000);
+// every 5 sec
+setInterval(referralWorker, 5000);
 
 // ==============================
 // 🌍 EXPRESS SERVER
@@ -194,9 +210,9 @@ const appServer = express();
 const PORT = process.env.PORT || 3000;
 
 appServer.get("/", (req, res) => {
-    res.send("Telegram Bot Backend Running");
+    res.send("Backend Running ✔️");
 });
 
 appServer.listen(PORT, () =>
-    console.log(`🚀 Server running on port ${PORT}`)
+    console.log(`🚀 Server running on ${PORT}`)
 );
