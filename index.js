@@ -176,7 +176,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
 
     // 2. Welcome message (referral link MESSAGE REMOVED per request)
     const welcomeCaption = `
-👋 Namaste! Swagat hai ${name} ⭐
+👋 Hii! Welcome ${name} ⭐
 
 Yaha aap tasks complete karke real rewards kama sakte ho!
 
