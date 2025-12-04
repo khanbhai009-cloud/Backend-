@@ -1,7 +1,7 @@
 // ==============================================
-// FINAL FIRESTORE BACKEND (Working Code)
-// Logic: Reward is granted only when 'frontendOpened' is TRUE.
-// After granting, 'frontendOpened' is set back to FALSE to prevent double-dipping.
+// FINAL FIRESTORE BACKEND (Simple State Machine: rewardgiven)
+// Logic: Reward tabhi milega jab refferBy set ho AUR rewardgiven=false ho.
+// Reward milne ke baad, rewardgiven=true aur frontendOpened=false set kiya jaata hai.
 // ==============================================
 
 import 'dotenv/config';
@@ -16,9 +16,9 @@ import {
     updateDoc,
     increment,
     collection,
-    getDocs,
     query,
     where,
+    getDocs, 
     serverTimestamp
 } from "firebase/firestore";
 
@@ -57,84 +57,87 @@ app.use(express.json());
 // ==============================
 
 /**
- * Extracts a clean numeric ID from the /start deep link argument.
+ * /start deep link se referral ID nikalta hai.
  */
 function extractReferralId(raw) {
     if (!raw) return null;
-    // Cleans spaces, '?', '=', and 'ref' (handling both 'ref123' and '?ref=123')
     const clean = raw.replace(/[\s?=]+/g, "").replace("ref", "");
     return clean || null;
 }
 
 /**
- * Creates a new user or updates the refferBy field if it was previously null.
+ * Naya user banata hai ya maujooda user ka refferBy field update karta hai (agar null ho).
  */
 async function createOrUpdateUser(userId, name, referralId = null) {
     const refUser = doc(db, "users", String(userId));
     const snap = await getDoc(refUser);
 
     if (!snap.exists()) {
-        // --- NEW USER CREATION ---
         const data = {
             id: String(userId),
             name,
-            photoURL: "", // Placeholder
+            photoURL: "", 
             coins: 0,
             reffer: 0,
-            refferBy: referralId || null,
+            refferBy: referralId || null, 
             tasksCompleted: 0,
             totalWithdrawals: 0,
-            frontendOpened: false, // Default: false
+            frontendOpened: false, 
+            rewardgiven: false, // 🛑 Nayi FIELD shamil ki gayi
         };
         await setDoc(refUser, data);
-        console.log(`🔥 Naya upyogakarta bana: ${userId}`); // New user created
         return data;
     } else {
-        // --- EXISTING USER UPDATE (Minimal Update Policy) ---
         let existing = snap.data();
         let updateData = {};
         
-        // Agar refferBy null hai aur naya referralId hai, toh update karein.
+        // Agar refferBy set nahi hai toh update karein
         if (!existing.refferBy && referralId) {
             updateData.refferBy = referralId;
+        }
+        
+        // Ensure rewardgiven exists if it's an old doc
+        if (existing.rewardgiven === undefined) {
+            updateData.rewardgiven = false;
         }
 
         if (Object.keys(updateData).length > 0) {
             await updateDoc(refUser, updateData);
-            console.log(`ℹ maujooda upyogakarta (refferBy) update hua: ${userId}`); // Existing user updated
             return { ...existing, ...updateData };
         }
         
-        console.log(`ℹ maujooda upyogakarta mila: ${userId} (koi update nahi)`); // Existing user found
         return existing;
     }
 }
 
 /**
- * Executes the referral reward logic, then resets frontendOpened to FALSE.
+ * Referral reward deta hai aur rewardgiven flag ko TRUE set karta hai.
+ * NOTE: Is function ko call karne se pehle eligibility check ho chuki hai.
  */
-async function grantReward(userId, referrerId) {
+async function grantRewardAndMarkComplete(userId, referrerId) {
+    // 1. Khud ka referral protection 
     if (String(userId) === String(referrerId)) {
-        // Self-referral protection: Reset frontendOpened to stop worker checks
-        await updateDoc(doc(db, "users", String(userId)), { frontendOpened: false });
-        console.warn(`🛑 Khud ka referral prayas roka gaya ${userId} ke liye`); // Self referral attempt blocked
+        await updateDoc(doc(db, "users", String(userId)), { frontendOpened: false, rewardgiven: true }); // Khud ko bhi mark karein
         return;
     }
-
-    // 1. Update Referrer (User A): coins +500, reffer +1
+    
+    // 2. Referrer (User A) ko update karein: coins +500, reffer +1
     const refRef = doc(db, "users", String(referrerId));
     await updateDoc(refRef, {
         coins: increment(REWARD_AMOUNT),
         reffer: increment(1)
     });
 
-    // 2. IMPORTANT: Reset User B's frontendOpened to FALSE to prevent double-dipping.
+    // 3. User B ke fields ko update karein:
+    //    a) rewardgiven: TRUE (Reward mil chuka hai)
+    //    b) frontendOpened: FALSE (Worker queue se hatane ke liye)
     const userRef = doc(db, "users", String(userId));
     await updateDoc(userRef, {
         frontendOpened: false, 
+        rewardgiven: true,
     });
 
-    // 3. Ledger Entry (Tracking ke liye zaroori)
+    // 4. Ledger Entry (Record rakhne ke liye) - Optional, but good practice
     await setDoc(doc(db, "ref_rewards", String(userId)), {
         userId: String(userId),
         referrerId: String(referrerId),
@@ -142,18 +145,16 @@ async function grantReward(userId, referrerId) {
         createdAt: serverTimestamp()
     });
 
-    // 4. Notify referrer
+    // 5. Referrer ko soochit karein
     try {
         await bot.sendMessage(
             referrerId,
-            `🎉 *Referral Bonus!* Aapne *${REWARD_AMOUNT} coins* kamaaye kyunki aapke referral ne app khola!`, // You earned 500 coins because your referral opened the app
+            `🎉 *Referral Bonus!* Aapne *${REWARD_AMOUNT} coins* kamaaye kyunki aapke referral ne app khola!`, 
             { parse_mode: "Markdown" }
         );
     } catch (e) {
-         console.log(`Referrer ko soochit nahi kar saka ${referrerId}`); // Could not notify referrer
+         console.log(`Referrer ko soochit nahi kar saka ${referrerId}`);
     }
-    
-    console.log(`✅ Reward diya gaya: ${referrerId} -> ${userId}`); // Reward granted
 }
 
 // ==============================
@@ -169,7 +170,7 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     // 1. Upyogakarta ko banayein/update karein
     await createOrUpdateUser(chatId, name, referralId);
 
-    // 2. Welcome message bhejain
+    // 2. Welcome message aur referral link bhejain
     const welcomeCaption = `
 👋 Namaste! Swagat hai ${name} ⭐
 
@@ -188,7 +189,7 @@ START dabao aur aapka safar shuru!
     const keyboard = {
         inline_keyboard: [
             [
-                { text: "▶ App Kholein", web_app: { url: WEB_APP_URL } } // Open App
+                { text: "▶ App Kholein", web_app: { url: WEB_APP_URL } } 
             ],
             [
                 { text: "📢 Channel", url: "https://t.me/finisher_tech" }
@@ -212,46 +213,43 @@ START dabao aur aapka safar shuru!
         });
     }
 
-    // 3. Referral Link bhejain
     const me = await bot.getMe();
     await bot.sendMessage(
         chatId,
-        `🔗 *Aapka referral link*:\nhttps://t.me/${me.username}?start=ref${chatId}`, // Your referral link
+        `🔗 *Aapka referral link*:\nhttps://t.me/${me.username}?start=ref${chatId}`,
         { parse_mode: "Markdown" }
     );
 });
 
 
 // ==============================
-// 🌐 HTTP ENDPOINT: /frontend-open (Real-time reward)
+// 🌐 HTTP ENDPOINT: /frontend-open (Real-time update)
 // ==============================
 app.post("/frontend-open", async (req, res) => {
     try {
         const { userId } = req.body;
-        if (!userId) return res.status(400).json({ error: "userId gayab hai" }); // Missing userId
+        if (!userId) return res.status(400).json({ error: "userId gayab hai" }); 
 
         const userRef = doc(db, "users", String(userId));
         const snap = await getDoc(userRef);
 
-        if (!snap.exists()) return res.json({ ok: false, msg: "Upyogakarta nahi mila" }); // User not found
+        if (!snap.exists()) return res.json({ ok: false, msg: "Upyogakarta nahi mila" }); 
 
         const data = snap.data();
         
-        // 1. frontendOpened ko TRUE set karein (agar nahi hai)
+        // 1. FrontendOpened ko TRUE set karein
         if (!data.frontendOpened) {
             await updateDoc(userRef, { frontendOpened: true });
         }
-
-        // 2. Eligibility Check: Agar frontendOpened FALSE hai, toh iska matlab hai reward mil chuka hai.
-        if (!data.frontendOpened || !data.refferBy) {
-             // Agar frontendOpened FALSE hai, skip karein (dobara reward nahi)
-            return res.json({ ok: true, msg: "Pehle hi reward mil chuka hai (frontendOpened FALSE hai) ya koi referrer nahi hai" }); 
+        
+        // 2. Eligibility Check: Agar refferBy set hai AND rewardgiven FALSE hai, toh turant reward de dein (optional, worker will catch it too)
+        if (data.refferBy && !data.rewardgiven) {
+            await grantRewardAndMarkComplete(userId, data.refferBy);
+            return res.json({ ok: true, msg: "Reward safaltapoorvak diya gaya" });
+        } else {
+            // Agar refferBy null hai YA reward pehle hi diya ja chuka hai
+            return res.json({ ok: true, msg: "Worker check karega ya reward pehle hi mil chuka hai." });
         }
-
-        // 3. Reward dein aur frontendOpened ko FALSE par reset karein
-        await grantReward(userId, data.refferBy); 
-
-        return res.json({ ok: true, msg: "Reward safaltapoorvak diya gaya" }); // Reward successful
 
     } catch (err) {
         console.error("frontend-open mein error:", err);
@@ -266,7 +264,9 @@ app.post("/frontend-open", async (req, res) => {
 async function referralWorker() {
     const usersRef = collection(db, "users");
 
-    // Query: Sirf woh users jo frontend khol chuke hain (frontendOpened=true)
+    // Query: Sirf woh users jinke liye frontendOpened=true hai
+    // NOTE: Isme woh users bhi honge jinko reward mil chuka hai (rewardgiven=true),
+    // lekin hum worker ke andar check karke unhe reset kar denge.
     const q = query(
         usersRef,
         where("frontendOpened", "==", true) 
@@ -278,15 +278,22 @@ async function referralWorker() {
         snaps.forEach(async (docSnap) => {
             const data = docSnap.data();
             const userId = docSnap.id;
-            const referrerId = data.refferBy;
-            
-            // Agar refferBy null nahi hai (referral se aaya hai), toh reward dein.
-            if (referrerId) {
-                await grantReward(userId, referrerId);
+            const referrerId = data.refferBy; 
+
+            // Eligibility Check:
+            // Condition 1: refferBy set hona chahiye.
+            // Condition 2: rewardgiven FALSE hona chahiye.
+            if (referrerId && !data.rewardgiven) {
+                // Reward dein aur mark complete karein
+                await grantRewardAndMarkComplete(userId, referrerId);
+            } else {
+                 // Agar refferBy null hai YA rewardgiven TRUE hai, toh sirf frontendOpened ko reset karein
+                 // Taki woh dobara worker query mein na aaye (performance cleanup).
+                 await updateDoc(doc(db, "users", String(userId)), { frontendOpened: false });
             }
         });
     } catch(e) {
-        console.error("Worker Error: Kripya is query ke liye Firestore Index banana sunischit karein."); // Please ensure Firestore Composite Index is created for this query
+        console.error("Worker Error: Kripya is query ke liye Firestore Index banana sunischit karein."); 
     }
 }
 
@@ -296,7 +303,7 @@ setInterval(referralWorker, 5000);
 // 🌍 SERVER START
 // ==============================
 app.get("/", (req, res) => {
-    res.send("Backend Chal raha hai ✔️"); // Backend Running
+    res.send("Backend Chal raha hai ✔️");
 });
 
-app.listen(PORT, () => console.log(`🚀 Backend chal raha hai ${PORT} par`)); // Backend running on PORT
+app.listen(PORT, () => console.log(`🚀 Backend chal raha hai ${PORT} par`));
