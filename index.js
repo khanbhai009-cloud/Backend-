@@ -1,8 +1,6 @@
-// index.js
-
-require('dotenv').config(); // Use if running locally with a .env file
-const express = require('express');
-const TelegramBot = require('node-telegram-bot-api');
+import 'dotenv/config';
+import express from 'express';
+import TelegramBot from 'node-telegram-bot-api';
 const { 
     initializeApp 
 } = require("firebase/app");
