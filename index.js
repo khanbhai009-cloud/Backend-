@@ -1,9 +1,8 @@
-// index.js (Corrected for ES Module Syntax)
+// index.js (Frontend Open Detection Logic)
 
-import 'dotenv/config'; // ESM way to load environment variables
+import 'dotenv/config';
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-// Use ESM imports for Firebase SDK
 import { 
     initializeApp 
 } from "firebase/app";
@@ -19,21 +18,20 @@ import {
     where, 
     getDocs, 
     serverTimestamp 
-} from "firebase/firestore";
+} from "firebase/firestore"; // Query modules are re-added
 
 // --- Configuration ---
 
-// ⚠️ Replace with your actual Bot Token
 const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_TELEGRAM_BOT_TOKEN'; 
 
-// ⚠️ Replace with your actual Firebase Configuration (FIXED: Must be a constant/variable)
-const firebaseConfig = { // <-- Corrected: Declared as a constant object
-  apiKey: "AIzaSyCY64NxvGWFC_SZxcAFX3ImNQwY3H-yclw",
-  authDomain: "tg-web-bot.firebaseapp.com",
-  projectId: "tg-web-bot",
-  storageBucket: "tg-web-bot.firebasestorage.app",
-  messagingSenderId: "69446541874",
-  appId: "1:69446541874:web:1ad058194db70530ff922b"
+// Use your Firebase config
+const firebaseConfig = {
+    apiKey: "AIzaSyCY64NxvGWFC_SZxcAFX3ImNQwY3H-yclw",
+    authDomain: "tg-web-bot.firebaseapp.com",
+    projectId: "tg-web-bot",
+    storageBucket: "tg-web-bot.firebasestorage.app",
+    messagingSenderId: "69446541874",
+    appId: "1:69446541874:web:1ad058194db70530ff922b"
 };
 
 const REWARD_AMOUNT = 500;
@@ -47,38 +45,7 @@ const db = getFirestore(app);
 // --- Telegram Bot Initialization ---
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// --- Firestore Helper Functions (Functions remain the same) ---
-
-/**
- * Creates or updates a user document in Firestore.
- */
-async function createOrEnsureUser(userId, firstName, photoURL, referralId = null) {
-    const userRef = doc(db, "users", String(userId));
-    const docSnap = await getDoc(userRef);
-
-    if (docSnap.exists()) {
-        await updateDoc(userRef, {
-            name: firstName,
-            photoURL: photoURL,
-            refferBy: docSnap.data().refferBy === null && referralId !== null ? referralId : docSnap.data().refferBy,
-        });
-        console.log(`User ${userId} updated.`);
-    } else {
-        await setDoc(userRef, {
-            id: String(userId),
-            name: firstName,
-            photoURL: photoURL,
-            coins: 0,
-            reffer: 0,
-            refferBy: referralId, 
-            tasksCompleted: 0,
-            totalWithdrawals: 0,
-            frontendOpened: false,
-            rewardGiven: false
-        }, { merge: true });
-        console.log(`New user ${userId} created with referral: ${referralId}`);
-    }
-}
+// --- Firestore Helper Functions ---
 
 /**
  * Updates a single field for a user.
@@ -95,25 +62,72 @@ async function updateField(userId, field, value) {
  */
 async function incrementField(userId, field, amount) {
     const userRef = doc(db, "users", String(userId));
-    await updateDoc(userRef, {
-        [field]: increment(amount)
-    });
+    try {
+        await updateDoc(userRef, {
+            [field]: increment(amount)
+        });
+    } catch (error) {
+         console.error(`Error incrementing field ${field} for user ${userId}:`, error.message);
+    }
 }
 
 /**
- * Rewards the referrer of a newly qualified user (userIdB).
+ * Creates or updates a user document in Firestore.
+ * NOTE: This function does NOT give the reward.
+ */
+async function createOrEnsureUser(userId, firstName, photoURL, referralId = null) {
+    const userRef = doc(db, "users", String(userId));
+    const docSnap = await getDoc(userRef);
+    let isNewUser = !docSnap.exists();
+    let oldReferrerId = docSnap.exists() ? docSnap.data().refferBy : null;
+
+    if (isNewUser) {
+        // New user creation
+        await setDoc(userRef, {
+            id: String(userId),
+            name: firstName,
+            photoURL: photoURL,
+            coins: 0,
+            reffer: 0,
+            refferBy: referralId, // Can be null
+            tasksCompleted: 0,
+            totalWithdrawals: 0,
+            frontendOpened: false, // Initial state
+            rewardGiven: false      // Reward not given yet
+        }, { merge: true });
+        console.log(`New user ${userId} created with referral: ${referralId}`);
+    } else if (oldReferrerId === null && referralId !== null) {
+        // Existing user, but referred for the first time
+        await updateDoc(userRef, {
+            name: firstName,
+            photoURL: photoURL,
+            refferBy: referralId,
+        });
+        console.log(`Existing user ${userId} updated with new referrer: ${referralId}`);
+    } else {
+        // User exists, update name/photo only
+        await updateDoc(userRef, {
+            name: firstName,
+            photoURL: photoURL,
+        });
+    }
+}
+
+/**
+ * Rewards the referrer (User A) only after User B opens the frontend.
+ * This is called by the Interval Worker.
  */
 async function rewardReferrer(userIdB, referrerIdA) {
-    console.log(`Processing reward for referrer ${referrerIdA} from user ${userIdB}`);
+    console.log(`Processing DELAYED reward for referrer ${referrerIdA} from qualified user ${userIdB}`);
 
     // 1. Increment referrer's fields
     try {
         await incrementField(referrerIdA, 'coins', REWARD_AMOUNT);
-        await incrementField(referrerIdA, 'reffer', 1);
+        await incrementField(referrerIdA, 'reffer', 1); // Referral count increase
         console.log(`Referrer ${referrerIdA} rewarded with ${REWARD_AMOUNT} coins and 1 reffer.`);
     } catch (error) {
         console.error(`Error rewarding referrer ${referrerIdA}:`, error.message);
-        return;
+        return; 
     }
 
     // 2. Set users/{B}.rewardGiven = true
@@ -142,14 +156,18 @@ async function rewardReferrer(userIdB, referrerIdA) {
     try {
         await bot.sendMessage(referrerIdA, `🎉 **Referral Bonus!** 🎉\nYou've earned ${REWARD_AMOUNT} coins because your referred user opened the app!`, { parse_mode: 'Markdown' });
     } catch (error) {
-        console.warn(`Could not send notification to referrer ${referrerIdA}. They might have blocked the bot.`);
+        console.warn(`Could not send notification to referrer ${referrerIdA}.`);
     }
 }
 
-// --- Telegram Bot Handlers (Handler remains the same) ---
+
+// --- Telegram Bot Handlers ---
 
 /**
  * Handles the /start command.
+ * 1. Extracts user info and referral ID.
+ * 2. Creates/merges user document.
+ * 3. Sends welcome message and buttons.
  */
 bot.onText(/\/start(.*)/, async (msg, match) => {
     const chatId = msg.chat.id;
@@ -157,12 +175,13 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     const userId = fromUser.id;
     const firstName = fromUser.first_name || 'Guest';
 
+    // Extract referral: /start ref123 -> "123"
     const referralMatch = match[1].trim().match(/^ref(\w+)/);
     const referralId = referralMatch ? referralMatch[1] : null;
 
     const photoURL = ''; 
 
-    // 1. Create or merge Firestore document
+    // 1. Create or merge Firestore document (Reward is NOT given here)
     await createOrEnsureUser(userId, firstName, photoURL, referralId);
 
     // 2. Return welcome image + buttons
@@ -214,17 +233,17 @@ Tap START and your journey begins!`;
 });
 
 
-// --- Referral Logic (Interval Worker Style - Logic remains the same) ---
+// --- Referral Logic (Interval Worker Style - Re-added) ---
 
 /**
  * The worker function that checks for users who have just qualified for a referral reward.
  * Condition: frontendOpened=true AND rewardGiven=false AND refferBy!=null
  */
 async function referralRewardWorker() {
-    console.log("Worker: Checking for pending referral rewards...");
+    // console.log("Worker: Checking for pending referral rewards..."); // Keep this quiet unless debugging
 
     const usersRef = collection(db, "users");
-
+    
     // Query users that meet all three conditions for a reward
     const q = query(
         usersRef, 
@@ -237,42 +256,44 @@ async function referralRewardWorker() {
         const querySnapshot = await getDocs(q);
 
         if (querySnapshot.empty) {
-            console.log("Worker: No users found needing a referral reward.");
+            // console.log("Worker: No users found needing a referral reward."); 
             return;
         }
 
-        console.log(`Worker: Found ${querySnapshot.size} users needing a reward.`);
-
+        console.log(`Worker: Found ${querySnapshot.size} users needing a DELAYED reward.`);
+        
         querySnapshot.forEach(async (docSnap) => {
             const userData = docSnap.data();
             const userIdB = docSnap.id;
             const referrerIdA = userData.refferBy;
 
-            if (userIdB && referrerIdA) {
-                if (userIdB !== referrerIdA) {
-                    await rewardReferrer(userIdB, referrerIdA);
-                } else {
-                    console.log(`Skipping self-referral check for user ${userIdB}. Marking as rewarded.`);
-                    await updateField(userIdB, 'rewardGiven', true);
-                }
+            if (userIdB && referrerIdA && userIdB !== referrerIdA) {
+                // This user B qualified! Reward referrer A.
+                await rewardReferrer(userIdB, referrerIdA);
+            } else if (userIdB === referrerIdA) {
+                // Self-referral protection for the worker loop
+                await updateField(userIdB, 'rewardGiven', true);
             }
         });
 
     } catch (error) {
-        console.error("Worker Error during Firestore query:", error.message);
+        // This usually means the Firestore Composite Index is missing!
+        console.error("Worker Error during Firestore query: The query requires an index. Please check your Firebase console.");
+        console.error("Error details:", error.message);
     }
 }
 
 // Start the interval worker (runs every 5 seconds)
 setInterval(referralRewardWorker, 5000); 
 
-// --- Express Server (Server code remains the same) ---
+
+// --- Express Server ---
 
 const appServer = express();
 const port = process.env.PORT || 3000;
 
 appServer.get('/', (req, res) => {
-  res.send('Telegram Bot Backend is running!');
+  res.send('Telegram Bot Backend is running (Worker Active)!');
 });
 
 appServer.listen(port, () => {
