@@ -26,13 +26,13 @@ const {
 const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_TELEGRAM_BOT_TOKEN'; 
 
 // ⚠️ Replace with your actual Firebase Configuration
-const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_AUTH_DOMAIN",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_STORAGE_BUCKET",
-    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-    appId: "YOUR_APP_ID"
+config.
+  apiKey: "AIzaSyCY64NxvGWFC_SZxcAFX3ImNQwY3H-yclw",
+  authDomain: "tg-web-bot.firebaseapp.com",
+  projectId: "tg-web-bot",
+  storageBucket: "tg-web-bot.firebasestorage.app",
+  messagingSenderId: "69446541874",
+  appId: "1:69446541874:web:1ad058194db70530ff922b"
 };
 
 const REWARD_AMOUNT = 500;
