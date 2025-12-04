@@ -1,10 +1,13 @@
-import 'dotenv/config';
+// index.js (Corrected for ES Module Syntax)
+
+import 'dotenv/config'; // ESM way to load environment variables
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
-const { 
+// Use ESM imports for Firebase SDK
+import { 
     initializeApp 
-} = require("firebase/app");
-const { 
+} from "firebase/app";
+import { 
     getFirestore, 
     doc, 
     getDoc, 
@@ -16,15 +19,15 @@ const {
     where, 
     getDocs, 
     serverTimestamp 
-} = require("firebase/firestore");
+} from "firebase/firestore";
 
 // --- Configuration ---
 
 // ⚠️ Replace with your actual Bot Token
 const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_TELEGRAM_BOT_TOKEN'; 
 
-// ⚠️ Replace with your actual Firebase Configuration
-config.
+// ⚠️ Replace with your actual Firebase Configuration (FIXED: Must be a constant/variable)
+const firebaseConfig = { // <-- Corrected: Declared as a constant object
   apiKey: "AIzaSyCY64NxvGWFC_SZxcAFX3ImNQwY3H-yclw",
   authDomain: "tg-web-bot.firebaseapp.com",
   projectId: "tg-web-bot",
@@ -44,53 +47,41 @@ const db = getFirestore(app);
 // --- Telegram Bot Initialization ---
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// --- Firestore Helper Functions ---
+// --- Firestore Helper Functions (Functions remain the same) ---
 
 /**
  * Creates or updates a user document in Firestore.
- * @param {string} userId Telegram user ID.
- * @param {string} firstName Telegram user's first name.
- * @param {string} photoURL Placeholder for user photo URL (not directly available in /start).
- * @param {string | null} referralId ID of the referrer.
  */
 async function createOrEnsureUser(userId, firstName, photoURL, referralId = null) {
     const userRef = doc(db, "users", String(userId));
-    
-    // Check if user exists to avoid overwriting existing data like coins
     const docSnap = await getDoc(userRef);
 
     if (docSnap.exists()) {
-        // User exists, merge new data if necessary (e.g., if refferBy wasn't set)
         await updateDoc(userRef, {
             name: firstName,
             photoURL: photoURL,
-            // Only update refferBy if it was previously null and a new referralId is present
             refferBy: docSnap.data().refferBy === null && referralId !== null ? referralId : docSnap.data().refferBy,
         });
         console.log(`User ${userId} updated.`);
     } else {
-        // New user
         await setDoc(userRef, {
             id: String(userId),
             name: firstName,
             photoURL: photoURL,
             coins: 0,
             reffer: 0,
-            refferBy: referralId, // Can be null
+            refferBy: referralId, 
             tasksCompleted: 0,
             totalWithdrawals: 0,
             frontendOpened: false,
             rewardGiven: false
-        }, { merge: true }); // Use merge:true just in case, though setDoc on new doc is fine
+        }, { merge: true });
         console.log(`New user ${userId} created with referral: ${referralId}`);
     }
 }
 
 /**
  * Updates a single field for a user.
- * @param {string} userId Telegram user ID.
- * @param {string} field Field name to update.
- * @param {*} value New value for the field.
  */
 async function updateField(userId, field, value) {
     const userRef = doc(db, "users", String(userId));
@@ -101,9 +92,6 @@ async function updateField(userId, field, value) {
 
 /**
  * Increments a field by a specified amount for a user.
- * @param {string} userId Telegram user ID.
- * @param {string} field Field name to increment.
- * @param {number} amount Amount to increment by.
  */
 async function incrementField(userId, field, amount) {
     const userRef = doc(db, "users", String(userId));
@@ -114,8 +102,6 @@ async function incrementField(userId, field, amount) {
 
 /**
  * Rewards the referrer of a newly qualified user (userIdB).
- * @param {string} userIdB The user who just qualified for the reward.
- * @param {string} referrerIdA The ID of the referrer.
  */
 async function rewardReferrer(userIdB, referrerIdA) {
     console.log(`Processing reward for referrer ${referrerIdA} from user ${userIdB}`);
@@ -127,7 +113,7 @@ async function rewardReferrer(userIdB, referrerIdA) {
         console.log(`Referrer ${referrerIdA} rewarded with ${REWARD_AMOUNT} coins and 1 reffer.`);
     } catch (error) {
         console.error(`Error rewarding referrer ${referrerIdA}:`, error.message);
-        return; // Stop if increment fails
+        return;
     }
 
     // 2. Set users/{B}.rewardGiven = true
@@ -136,9 +122,8 @@ async function rewardReferrer(userIdB, referrerIdA) {
         console.log(`User ${userIdB} marked as rewardGiven=true.`);
     } catch (error) {
         console.error(`Error updating user ${userIdB} rewardGiven:`, error.message);
-        // Continue to ledger even if this fails, as the referrer was rewarded
     }
-    
+
     // 3. Create ledger (ref_rewards/{B})
     try {
         const ledgerRef = doc(db, "ref_rewards", String(userIdB));
@@ -161,25 +146,20 @@ async function rewardReferrer(userIdB, referrerIdA) {
     }
 }
 
-// --- Telegram Bot Handlers ---
+// --- Telegram Bot Handlers (Handler remains the same) ---
 
 /**
  * Handles the /start command.
- * 1. Extracts user info and referral ID.
- * 2. Creates/merges user document in Firestore.
- * 3. Sends welcome message and buttons.
  */
 bot.onText(/\/start(.*)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const fromUser = msg.from;
     const userId = fromUser.id;
     const firstName = fromUser.first_name || 'Guest';
-    
-    // Extract referral: /start ref123 -> "123"
+
     const referralMatch = match[1].trim().match(/^ref(\w+)/);
     const referralId = referralMatch ? referralMatch[1] : null;
 
-    // A placeholder for photoURL, as it's not directly in the /start message object.
     const photoURL = ''; 
 
     // 1. Create or merge Firestore document
@@ -234,7 +214,7 @@ Tap START and your journey begins!`;
 });
 
 
-// --- Referral Logic (Interval Worker Style) ---
+// --- Referral Logic (Interval Worker Style - Logic remains the same) ---
 
 /**
  * The worker function that checks for users who have just qualified for a referral reward.
@@ -244,13 +224,13 @@ async function referralRewardWorker() {
     console.log("Worker: Checking for pending referral rewards...");
 
     const usersRef = collection(db, "users");
-    
+
     // Query users that meet all three conditions for a reward
     const q = query(
         usersRef, 
         where("frontendOpened", "==", true),
         where("rewardGiven", "==", false),
-        where("refferBy", "!=", null) // Firebase requires an index for this
+        where("refferBy", "!=", null) 
     );
 
     try {
@@ -262,23 +242,17 @@ async function referralRewardWorker() {
         }
 
         console.log(`Worker: Found ${querySnapshot.size} users needing a reward.`);
-        
+
         querySnapshot.forEach(async (docSnap) => {
             const userData = docSnap.data();
             const userIdB = docSnap.id;
             const referrerIdA = userData.refferBy;
 
             if (userIdB && referrerIdA) {
-                // Ensure the referrer ID is not the user ID itself (self-referral check)
                 if (userIdB !== referrerIdA) {
-                    // This function handles all required steps: 
-                    // 1. Increment referrer's fields
-                    // 2. Set users/{B}.rewardGiven = true
-                    // 3. Create ledger
                     await rewardReferrer(userIdB, referrerIdA);
                 } else {
                     console.log(`Skipping self-referral check for user ${userIdB}. Marking as rewarded.`);
-                    // Mark as rewarded to prevent continuous checking
                     await updateField(userIdB, 'rewardGiven', true);
                 }
             }
@@ -292,7 +266,7 @@ async function referralRewardWorker() {
 // Start the interval worker (runs every 5 seconds)
 setInterval(referralRewardWorker, 5000); 
 
-// --- Express Server (for deployment/webhook setup if needed) ---
+// --- Express Server (Server code remains the same) ---
 
 const appServer = express();
 const port = process.env.PORT || 3000;
@@ -304,6 +278,3 @@ appServer.get('/', (req, res) => {
 appServer.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
-
-// Note: For production use with Telegram webhooks, you'd replace 'polling: true' 
-// with webhook setup using the express server.
