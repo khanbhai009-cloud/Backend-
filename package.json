@@ -1,0 +1,15 @@
+{
+  "name": "telegram-firestore-bot",
+  "version": "1.0.0",
+  "description": "Node.js Telegram bot using node-telegram-bot-api, Firebase Client SDK, and Express.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "firebase": "^10.12.2",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
