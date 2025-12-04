@@ -1,9 +1,3 @@
-// ==============================================
-// FINAL FIRESTORE BACKEND (Simple State Machine: rewardgiven)
-// Logic: Reward tabhi milega jab refferBy set ho AUR rewardgiven=false ho.
-// Reward milne ke baad, rewardgiven=true aur frontendOpened=false set kiya jaata hai.
-// ==============================================
-
 import 'dotenv/config';
 import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
@@ -58,10 +52,16 @@ app.use(express.json());
 
 /**
  * /start deep link se referral ID nikalta hai.
+ * Now robust: supports "ref123", "?ref=123", plain "123", etc.
  */
 function extractReferralId(raw) {
     if (!raw) return null;
-    const clean = raw.replace(/[\s?=]+/g, "").replace("ref", "");
+    // remove spaces, ?, = characters
+    let clean = raw.replace(/[\s?=]+/g, "");
+    // if it starts with "ref", strip that prefix
+    if (clean.toLowerCase().startsWith("ref")) {
+        clean = clean.substring(3);
+    }
     return clean || null;
 }
 
@@ -86,16 +86,17 @@ async function createOrUpdateUser(userId, name, referralId = null) {
             rewardgiven: false, // 🛑 Nayi FIELD shamil ki gayi
         };
         await setDoc(refUser, data);
+        console.log(`🔥 New user created: ${userId}`);
         return data;
     } else {
         let existing = snap.data();
         let updateData = {};
-        
+
         // Agar refferBy set nahi hai toh update karein
         if (!existing.refferBy && referralId) {
             updateData.refferBy = referralId;
         }
-        
+
         // Ensure rewardgiven exists if it's an old doc
         if (existing.rewardgiven === undefined) {
             updateData.rewardgiven = false;
@@ -105,7 +106,7 @@ async function createOrUpdateUser(userId, name, referralId = null) {
             await updateDoc(refUser, updateData);
             return { ...existing, ...updateData };
         }
-        
+
         return existing;
     }
 }
@@ -118,9 +119,10 @@ async function grantRewardAndMarkComplete(userId, referrerId) {
     // 1. Khud ka referral protection 
     if (String(userId) === String(referrerId)) {
         await updateDoc(doc(db, "users", String(userId)), { frontendOpened: false, rewardgiven: true }); // Khud ko bhi mark karein
+        console.warn(`🛑 Self referral attempt blocked for ${userId}`);
         return;
     }
-    
+
     // 2. Referrer (User A) ko update karein: coins +500, reffer +1
     const refRef = doc(db, "users", String(referrerId));
     await updateDoc(refRef, {
@@ -137,7 +139,7 @@ async function grantRewardAndMarkComplete(userId, referrerId) {
         rewardgiven: true,
     });
 
-    // 4. Ledger Entry (Record rakhne ke liye) - Optional, but good practice
+    // 4. Ledger Entry (Record rakhne ke liye)
     await setDoc(doc(db, "ref_rewards", String(userId)), {
         userId: String(userId),
         referrerId: String(referrerId),
@@ -155,6 +157,8 @@ async function grantRewardAndMarkComplete(userId, referrerId) {
     } catch (e) {
          console.log(`Referrer ko soochit nahi kar saka ${referrerId}`);
     }
+
+    console.log(`✅ Reward granted: ${referrerId} <- ${userId}`);
 }
 
 // ==============================
@@ -170,20 +174,20 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     // 1. Upyogakarta ko banayein/update karein
     await createOrUpdateUser(chatId, name, referralId);
 
-    // 2. Welcome message aur referral link bhejain
+    // 2. Welcome message (referral link MESSAGE REMOVED per request)
     const welcomeCaption = `
 👋 Namaste! Swagat hai ${name} ⭐
 
-Yahan aap tasks complete karke real rewards kama sakte ho!
+Yaha aap tasks complete karke real rewards kama sakte ho!
 
-🔥 Roz ke Tasks (Daily Tasks)
-🔥 Video Dekhna
+🔥 Daily Tasks
+🔥 Video Watch
 🔥 Mini Apps
 🔥 Referral Bonus
 🔥 Auto Wallet System
 
-**Kamaane ke liye taiyar?**
-START dabao aur aapka safar shuru!
+Ready to earn?
+Tap START and your journey begins!
 `;
 
     const keyboard = {
@@ -213,12 +217,7 @@ START dabao aur aapka safar shuru!
         });
     }
 
-    const me = await bot.getMe();
-    await bot.sendMessage(
-        chatId,
-        `🔗 *Aapka referral link*:\nhttps://t.me/${me.username}?start=ref${chatId}`,
-        { parse_mode: "Markdown" }
-    );
+    // referral link message removed intentionally
 });
 
 
@@ -236,12 +235,12 @@ app.post("/frontend-open", async (req, res) => {
         if (!snap.exists()) return res.json({ ok: false, msg: "Upyogakarta nahi mila" }); 
 
         const data = snap.data();
-        
+
         // 1. FrontendOpened ko TRUE set karein
         if (!data.frontendOpened) {
             await updateDoc(userRef, { frontendOpened: true });
         }
-        
+
         // 2. Eligibility Check: Agar refferBy set hai AND rewardgiven FALSE hai, toh turant reward de dein (optional, worker will catch it too)
         if (data.refferBy && !data.rewardgiven) {
             await grantRewardAndMarkComplete(userId, data.refferBy);
@@ -265,8 +264,6 @@ async function referralWorker() {
     const usersRef = collection(db, "users");
 
     // Query: Sirf woh users jinke liye frontendOpened=true hai
-    // NOTE: Isme woh users bhi honge jinko reward mil chuka hai (rewardgiven=true),
-    // lekin hum worker ke andar check karke unhe reset kar denge.
     const q = query(
         usersRef,
         where("frontendOpened", "==", true) 
